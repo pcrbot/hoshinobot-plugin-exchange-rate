@@ -3,9 +3,8 @@ from os import path
 import re
 import time
 import aiohttp
-from hoshino import Service
 
-sv_help = '''
+help_message = '''
 汇率
 [汇率] 查看汇率
 [汇率+货币] 查看汇率
@@ -13,14 +12,6 @@ sv_help = '''
 [汇率收藏+货币] 收藏货币
 [汇率取消收藏+货币] 取消收藏货币
 '''.strip()
-
-sv = Service(
-    name="汇率",  # 功能名
-    visible=True,  # 可见性
-    enable_on_default=True,  # 默认启用
-    bundle="工具",  # 分组归类
-    help_=sv_help,  # 帮助说明
-)
 
 def file_path(file_name : str) -> str:
     return path.join(path.dirname(__file__), file_name)
@@ -33,8 +24,9 @@ with open(file_path('alias.json'), 'r') as f:
 with open(file_path('currencies.csv'), 'r') as f:
     currencies = f.read().split('\n')
     for currency in currencies:
-        alias[currency[3]] = currency[0]
-        readable[currency[0]] = currency[3]
+        fields = currency.split(',')
+        alias[fields[3]] = fields[0]
+        readable[fields[0]] = fields[3]
 
 rate_updated = 0
 rates : dict[str, float | int] = {}
@@ -71,72 +63,56 @@ def get_currency_code(currency_name : str):
         return code
     return None
 
-@sv.on_prefix("汇率")
-async def _(bot, event):
-    query : str = event.raw_message
+async def handle_message(query):
     if query.startswith('汇率收藏'):
         currency_name = query[4:].strip()
         if not currency_name:
-            await bot.send(event, '汇率收藏+货币')
-            return
+            return '汇率收藏+货币'
         currency_code = get_currency_code(currency_name)
         if currency_code is None:
-            await bot.send(event, '不支持的货币')
-            return
-        if currency_code not in rate:
-            await bot.send(event, '无数据：' + readable[currency_code])
-            return
+            return '不支持的货币'
+        if currency_code not in rates:
+            return '无数据：' + readable[currency_code]
         if currency_code not in saved:
             saved.append(currency_code)
             save_saved()
-            await bot.send(event, '收藏成功：' + readable[currency_code])
-            return
-        await bot.send(event, f'{currency_code} 已在收藏内')
-        return
+            return '收藏成功：' + readable[currency_code]
+        return f'{currency_code} 已在收藏内'
     if query.startswith('汇率取消收藏'):
         currency_name = query[6:].strip()
         if not currency_name:
-            await bot.send(event, '汇率取消收藏+货币')
-            return
+            return '汇率取消收藏+货币'
         currency_code = get_currency_code(currency_name)
         if currency_code is None:
-            await bot.send(event, '不支持的货币')
-            return
+            return '不支持的货币' + currency_name
         if currency_code not in saved:
-            await bot.send(event, '未收藏：' + readable[currency_code])
-            return
+            return '未收藏：' + readable[currency_code]
         saved.remove(currency_code)
         save_saved()
-        await bot.send(event, f'{currency_code} 已取消收藏')
-        return
+        return f'{currency_code} 已取消收藏'
     if query == '汇率帮助':
-        await bot.send(event, sv_help)
-        return
+        return help_message
     if query.startswith('汇率'):
         query = query[2:].strip()
         if not query:
-            await bot.send(event, await get_message('USD', 100))
-            return
+            return await generate_message('USD', 100)
         value = 100
-        query_value = re.match(r'^(\d+(?:\.\d{1,2}))', query)
+        query_value = re.match(r'^(\d+(?:\.\d{1,2})?)', query)
         if query_value:
             value = float(query_value.group(1))
             query = query[query_value.end():].strip()
         currency_name = query
         if not currency_name:
-            await bot.send(event, '汇率\n汇率+货币\n汇率+数额+货币')
-            return
+            return '汇率\n汇率+货币\n汇率+数额+货币'
         currency_code = get_currency_code(currency_name)
         if currency_code is None:
-            await bot.send(event, '不支持的货币')
-            return
-        if currency_code not in rate:
-            await bot.send(event, '无数据：' + readable[currency_code])
-            return
-        await bot.send(event, await get_message(currency_code, value))
-        return
+            return '不支持的货币' + currency_name
+        if currency_code not in rates:
+            return '无数据：' + readable[currency_code]
+        return await generate_message(currency_code, value)
 
 async def update_rate():
+    global rate_updated, rates
     now_ts = int(time.time())
     updated = rate_updated
     if now_ts - updated < 24 * 60 * 60:
@@ -145,17 +121,16 @@ async def update_rate():
         async with session.get(api_url) as resp:
             if resp.status != 200:
                 return
-            data = await resp.json()
-            global rate_updated, rates
-            rate_updated = data.updated
-            rates = data.rates
+            data = json.loads(await resp.text())
+            rate_updated = data['updated']
+            rates = data['rates']
             save_rate()
 
-async def get_message(currency : str, value : int | float):
+async def generate_message(currency : str, value : int | float):
     await update_rate()
     core_value = value / rates[currency]
-    message = f'{value} {readable[currency]} 等于\n'
+    message = f'{value} {readable[currency]} 等于'
     for c in saved:
         v = core_value * rates[c]
-        message += f'{v:.4f} {readable[c]}\n'
+        message += f'\n{v:.4f} {readable[c]}'
     return message

@@ -1,2 +1,10 @@
-!data/.gitkeep
-data/*
+!src/data/.gitkeep
+src/data/*
+
+venv
+*.py[cdo]
+__pycache__
+
+.vscode/
+.idea/
+.DS_Store
